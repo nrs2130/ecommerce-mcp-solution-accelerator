@@ -1,0 +1,12 @@
+# Production Path — Python Dependencies
+#
+# Install:  pip install -r requirements.txt
+
+# Azure AI Foundry Projects SDK (v2 API — MCPTool support)
+azure-ai-projects>=2.0.0
+
+# Azure authentication
+azure-identity>=1.15.0
+
+# Environment variable loading
+python-dotenv>=1.0.0

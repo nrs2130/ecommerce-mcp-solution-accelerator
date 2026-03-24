@@ -54,8 +54,8 @@ location mechanism.
 │                                                           │
 │  CLOUD (production):                                      │
 │    Docker container on Azure Container Apps               │
-│    SSE transport (--port 3000) over HTTPS                 │
-│    See "Moving to Production" section below               │
+│    Streamable HTTP (--port 8080) over HTTPS               │
+│    See production/ directory for full code                 │
 │                                                           │
 └───────────────────────────────────────────────────────────┘
 ```
@@ -107,8 +107,8 @@ over stdio.
 
 > **For initial testing and development, running locally is the
 > recommended starting point.** No cloud browser infrastructure is
-> required. See [Moving to Production](#moving-to-production-cloud-hosted-mcp)
-> below when you're ready to deploy.
+> required. See the [`production/`](production/) directory when you're
+> ready to deploy to Azure.
 
 #### Install Node.js
 
@@ -475,7 +475,7 @@ it is **not** an MCP server host.
 
 When you're ready to run in production, you host the Playwright MCP
 server on **Azure Container Apps** (see
-[Moving to Production](#moving-to-production-cloud-hosted-mcp) below).
+the [Production Path](#production-path-foundry-native-mcp-agent-v2-api) below).
 
 ### Do I need a Bing Custom Search resource?
 
@@ -488,7 +488,7 @@ not required.
 | Stage | Resources |
 |-------|-----------|
 | **Development** | Microsoft Foundry project (with GPT model) — that's it |
-| **Production** | Microsoft Foundry project + Azure Container Apps (to host MCP server) |
+| **Production** | Microsoft Foundry project + Azure Container Apps (to host MCP server). See [`production/`](production/) |
 
 ### Do I need to set up MCP in VS Code?
 
@@ -627,31 +627,46 @@ async with sse_client(
 
 ---
 
-## Accelerator Path: Foundry-Native MCP Agent (v2 API)
+## Production Path: Foundry-Native MCP Agent (v2 API)
 
-The current architecture uses a **client-side tool-call loop** — your Python
-code starts a local MCP server, discovers tools, creates an ephemeral Foundry
-agent, and proxies every tool call through your machine.
+The **[`production/`](production/)** directory contains a complete,
+ready-to-deploy implementation of the Foundry-native MCP architecture.
+Foundry calls the Playwright MCP server **directly** — no local tool
+proxy, no Node.js on your machine.
 
-Microsoft Foundry's **v2 Agent API** supports a fully server-side alternative:
-register the Playwright MCP server as a native **`MCPTool`** on the agent.
-Foundry calls the MCP server directly — no local proxy, no tool-call loop in
-your code.
+### Quick start (production)
+
+```bash
+cd production
+
+# 1. Deploy the Playwright MCP server to Azure Container Apps
+cd infra && bash deploy.sh && cd ..
+
+# 2. Configure your .env (add PLAYWRIGHT_MCP_URL from step 1)
+cp .env.example .env   # then edit
+
+# 3. Register the agent with MCPTool
+pip install -r requirements.txt
+python setup_agent.py
+
+# 4. Run the demo (Responses API — no local browser needed)
+python run_demo.py --tier 1
+```
 
 ### Architecture comparison
 
 ```
-  Current (client-side loop)              Accelerator (Foundry-native MCPTool)
-  ════════════════════════════            ══════════════════════════════════════
+  Dev path (run_demo.py)                  Production path (production/)
+  ══════════════════════                  ════════════════════════════
 
   ┌──────────────┐                        ┌──────────────┐
   │  Your Python  │                        │  Your Python  │
-  │  run_demo.py  │                        │  (minimal)    │
+  │  run_demo.py  │                        │  (thin client)│
   └──────┬───────┘                        └──────┬───────┘
-         │ 1. Start MCP (stdio)                   │ 1. Create conversation
-         │ 2. Discover 28 tools                   │ 2. Send prompt
-         │ 3. Create agent + thread               │ 3. Approve MCP calls
-         │ 4. Poll run status                     │ 4. Read response
+         │ 1. Start MCP (stdio)                   │ 1. Responses API call
+         │ 2. Discover 28 tools                   │ 2. Read response
+         │ 3. Create agent + thread               │    (that's it)
+         │ 4. Poll run status                     │
          │ 5. Proxy tool calls ←→ MCP             │
          │ 6. Return response                     │
          ▼                                        ▼
@@ -671,79 +686,47 @@ your code.
 
 ### What changes
 
-| Component | Current | Foundry-native MCPTool |
+| Component | Dev path | Production path |
 |-----------|---------|----------------------|
 | SDK | `azure-ai-agents` 1.x (classic) | `azure-ai-projects` 2.x (v2) |
 | Agent identity | Agent ID | Agent name + version |
 | Tool registration | 28 × `FunctionTool` defs | 1 × `MCPTool(server_url=...)` |
-| Tool execution | Client-side proxy via `mcp.ClientSession` | Foundry runtime calls MCP server directly |
-| MCP transport | stdio (local `npx`) | HTTPS (remote Container App) |
-| Tool approval | Automatic (client code) | `require_approval="never"` or interactive |
-| Portal visibility | Classic agents list | New agents list with MCP tool connection |
-| Local dependencies | Node.js + Chromium | None (all cloud-hosted) |
+| Tool execution | Client proxies every call | Foundry calls MCP server directly |
+| MCP transport | stdio (local `npx`) | HTTPS (Azure Container Apps) |
+| Chat API | Agents polling loop | OpenAI Responses API |
+| Portal visibility | Classic agents | New agents + MCP tool connection |
+| Local dependencies | Node.js + Chromium | Python only |
 
-### Implementation steps (future)
+### Production directory structure
 
-**Step 1 — Host Playwright MCP on Azure Container Apps** (see section above)
-
-**Step 2 — Register the agent with `MCPTool`**
-
-```python
-from azure.ai.projects import AIProjectClient
-from azure.ai.projects.models import PromptAgentDefinition, MCPTool
-from azure.identity import DefaultAzureCredential
-
-project = AIProjectClient(
-    endpoint="https://your-hub.services.ai.azure.com/api/projects/your-project",
-    credential=DefaultAzureCredential(),
-)
-
-# Register an MCPTool pointing to the cloud-hosted Playwright server
-tool = MCPTool(
-    server_label="playwright",
-    server_url="https://playwright-mcp.<id>.<region>.azurecontainerapps.io/mcp",
-    require_approval="never",
-)
-
-agent = project.agents.create_version(
-    agent_name="ecommerce-mcp-price-monitor",
-    definition=PromptAgentDefinition(
-        model="gpt-5.4",
-        instructions="You are an e-commerce pricing agent. Use the Playwright "
-                     "browser tools to navigate pages and extract pricing data.",
-        tools=[tool],
-    ),
-)
-print(f"Agent: {agent.name} v{agent.version}")
+```
+production/
+├── mcp-server/
+│   ├── Dockerfile                  # @playwright/mcp + headless Chromium
+│   └── .dockerignore
+├── infra/
+│   ├── deploy.sh                   # One-click Azure deployment (CLI)
+│   └── main.bicep                  # Infrastructure as Code (Bicep)
+├── setup_agent.py                  # Register agent with MCPTool
+├── run_demo.py                     # Chat via Responses API
+├── requirements.txt                # Python dependencies (no MCP/Node.js)
+├── .env.example                    # Environment template
+└── README.md                       # Full setup guide
 ```
 
-**Step 3 — Chat with the agent using the Responses API**
-
-```python
-openai = project.get_openai_client()
-
-conversation = openai.conversations.create()
-response = openai.responses.create(
-    conversation=conversation.id,
-    input="Navigate to https://www.amazon.in/dp/B00BQFTQW6 and extract the price",
-    extra_body={
-        "agent_reference": {
-            "name": "ecommerce-mcp-price-monitor",
-            "type": "agent_reference",
-        }
-    },
-)
-print(response.output_text)
-```
+> See **[production/README.md](production/README.md)** for the complete
+> setup guide, security considerations, and documentation links.
 
 ### Key documentation
 
 | Topic | Link |
 |-------|------|
-| Foundry quickstart (v2 SDK) | [Get started with code](https://learn.microsoft.com/azure/foundry/quickstarts/get-started-code?tabs=python) |
-| Connect agents to MCP servers | [MCP tool docs](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/model-context-protocol?pivots=python) |
-| MCP server authentication | [MCP authentication](https://learn.microsoft.com/azure/foundry/agents/how-to/mcp-authentication) |
-| Host local MCP on Azure | [Container Apps](https://github.com/Azure-Samples/mcp-container-ts) / [Azure Functions](https://github.com/Azure-Samples/mcp-sdk-functions-hosting-python) |
+| Build & register MCP servers | [Microsoft Learn](https://learn.microsoft.com/azure/foundry/mcp/build-your-own-mcp-server) |
+| Host MCP on Azure Functions | [Tutorial](https://learn.microsoft.com/azure/azure-functions/functions-mcp-tutorial?pivots=programming-language-python) |
+| Connect agents to MCP servers | [MCP tool docs](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/model-context-protocol) |
+| MCP server authentication | [Auth patterns](https://learn.microsoft.com/azure/foundry/agents/how-to/mcp-authentication) |
+| Azure Functions MCP template | [GitHub](https://github.com/Azure-Samples/remote-mcp-functions-python) |
+| Foundry quickstart (v2 SDK) | [Get started](https://learn.microsoft.com/azure/foundry/quickstarts/get-started-code?tabs=python) |
 | Enterprise agent tutorial | [Idea to prototype](https://learn.microsoft.com/azure/foundry/tutorials/developer-journey-idea-to-prototype?tabs=python) |
 | Private MCP networking | [Virtual networks](https://learn.microsoft.com/azure/foundry/agents/how-to/virtual-networks) |
 
