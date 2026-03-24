@@ -466,12 +466,16 @@ python run_demo.py --model gpt-4.1
 
 ## FAQ
 
-### Do I need to create an Azure Playwright resource?
+### Do I need an Azure Playwright Testing resource?
 
-**No.** The Playwright MCP server runs locally via `npx` — it's an
-open-source npm package. Azure Playwright Testing is a separate service
-for running browsers in the cloud at scale, but it is **not required**
-for this solution.
+**Not for development.** The Playwright MCP server runs locally via
+`npx` — it's a free, open-source npm package. Azure Playwright Testing
+is a separate service for running Playwright *test suites* at scale —
+it is **not** an MCP server host.
+
+When you're ready to run in production, you host the Playwright MCP
+server on **Azure Container Apps** (see
+[Moving to Production](#moving-to-production-cloud-hosted-mcp) below).
 
 ### Do I need a Bing Custom Search resource?
 
@@ -481,8 +485,20 @@ not required.
 
 ### What Azure resources do I need?
 
-Just one: an **Microsoft Foundry project** with a deployed GPT model.
-That's it. No Playwright resource, no Bing resource, no browser VMs.
+| Stage | Resources |
+|-------|-----------|
+| **Development** | Microsoft Foundry project (with GPT model) — that's it |
+| **Production** | Microsoft Foundry project + Azure Container Apps (to host MCP server) |
+
+### Do I need to set up MCP in VS Code?
+
+It depends on your workflow:
+
+- **For running the solution accelerator code** → No VS Code MCP setup
+  needed. The Python code manages the MCP server programmatically.
+- **For interactive use with GitHub Copilot** → Yes, register the
+  Playwright MCP server in VS Code so Copilot can browse real pages.
+  See [VS Code MCP Integration](#3-vs-code-mcp-integration) above.
 
 ### Does it work on Linux/macOS?
 
@@ -503,6 +519,114 @@ location picker, and Tier 1/Tier 3 work out of the box.
 
 ---
 
+## Moving to Production (Cloud-Hosted MCP)
+
+The local `npx` setup is ideal for **development and initial testing**.
+When you're ready to run at scale or in a headless environment, host the
+Playwright MCP server on **Azure Container Apps** — Azure's serverless
+container platform.
+
+### When to move to cloud
+
+| Signal | Action |
+|--------|--------|
+| You need to run on a schedule (cron / orchestrator) | Host MCP server on Azure Container Apps |
+| Multiple users / apps need to share the browser | Host behind a load balancer on Container Apps |
+| You need to run from a CI/CD pipeline or Azure Function | Host MCP server as a sidecar or separate service |
+| You need audit-grade screenshots stored centrally | Add Azure Blob Storage for screenshot persistence |
+
+### How to host Playwright MCP on Azure Container Apps
+
+Playwright MCP supports an **SSE (Server-Sent Events) transport** in
+addition to the default stdio transport. This lets you run the server
+as a long-lived HTTP service.
+
+#### Step 1: Create a Container App
+
+Use the Azure CLI to deploy directly from the Playwright Docker image:
+
+```bash
+# Create a resource group (if you don't have one)
+az group create --name rg-playwright-mcp --location eastus2
+
+# Create a Container Apps environment
+az containerapp env create \
+  --name mcp-env \
+  --resource-group rg-playwright-mcp \
+  --location eastus2
+
+# Deploy the Playwright MCP server
+az containerapp create \
+  --name playwright-mcp \
+  --resource-group rg-playwright-mcp \
+  --environment mcp-env \
+  --image mcr.microsoft.com/playwright:v1.52.0-noble \
+  --command "npx" "--" "@playwright/mcp@latest" "--port" "3000" "--headless" \
+  --target-port 3000 \
+  --ingress external \
+  --cpu 1 --memory 2Gi \
+  --min-replicas 1 \
+  --max-replicas 3
+```
+
+#### Step 2: Get the Container App URL
+
+```bash
+az containerapp show \
+  --name playwright-mcp \
+  --resource-group rg-playwright-mcp \
+  --query properties.configuration.ingress.fqdn \
+  --output tsv
+```
+
+This gives you a URL like:
+`playwright-mcp.<unique-id>.<region>.azurecontainerapps.io`
+
+#### Step 3: Update your Python code to connect via SSE
+
+```python
+# Instead of StdioServerParameters, use the SSE client:
+from mcp.client.sse import sse_client
+
+async with sse_client(
+    "https://playwright-mcp.<id>.<region>.azurecontainerapps.io/sse"
+) as (read, write):
+    async with ClientSession(read, write) as session:
+        await session.initialize()
+        tools = await session.list_tools()
+        # ... same tool-call loop as before
+```
+
+#### Cloud architecture
+
+```
+┌─────────────────────────────────┐
+│  Your App / Azure Function      │
+│  (Python + Foundry SDK)         │
+└─────────────┬───────────────────┘
+              │  MCP over SSE (HTTPS)
+              ▼
+┌─────────────────────────────────┐
+│  Azure Container Apps           │
+│  (Playwright MCP server)        │
+│  Headless Chromium              │
+│  Port 3000, auto-scale 1–3     │
+└─────────────────────────────────┘
+```
+
+### Azure documentation for cloud hosting
+
+| Topic | Link |
+|-------|------|
+| Azure Container Apps overview | [Container Apps docs](https://learn.microsoft.com/azure/container-apps/) |
+| Quickstart: Deploy a container app | [Container Apps quickstart](https://learn.microsoft.com/azure/container-apps/get-started) |
+| Container Apps scaling rules | [Scaling](https://learn.microsoft.com/azure/container-apps/scale-app) |
+| Container Apps networking / ingress | [Ingress](https://learn.microsoft.com/azure/container-apps/ingress-overview) |
+| Playwright Docker images | [Playwright Docker](https://playwright.dev/docs/docker) |
+| Playwright MCP SSE transport | [Playwright MCP config](https://github.com/microsoft/playwright-mcp#configuration) |
+
+---
+
 ## Additional Microsoft Learn Documentation
 
 | Topic | Link |
@@ -517,9 +641,11 @@ location picker, and Tier 1/Tier 3 work out of the box.
 | Playwright MCP (GitHub) | [microsoft/playwright-mcp](https://github.com/microsoft/playwright-mcp) |
 | MCP protocol | [modelcontextprotocol.io](https://modelcontextprotocol.io/) |
 | Playwright device emulation | [Playwright emulation](https://playwright.dev/docs/emulation) |
+| Playwright Docker images | [Playwright Docker](https://playwright.dev/docs/docker) |
 | VS Code MCP servers | [Use MCP servers in VS Code](https://code.visualstudio.com/docs/copilot/chat/mcp-servers) |
 | Azure Container Apps | [Container Apps docs](https://learn.microsoft.com/azure/container-apps/) |
-| Playwright Docker images | [Playwright Docker](https://playwright.dev/docs/docker) |
+| Container Apps quickstart | [Deploy a container app](https://learn.microsoft.com/azure/container-apps/get-started) |
+| Container Apps scaling | [Scale apps](https://learn.microsoft.com/azure/container-apps/scale-app) |
 
 ---
 
