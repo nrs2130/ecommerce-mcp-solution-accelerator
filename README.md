@@ -234,7 +234,46 @@ az login
 This sets up `DefaultAzureCredential` for local development. For
 production, use [Managed Identity](https://learn.microsoft.com/entra/identity/managed-identities-azure-resources/overview).
 
-### 6. Run the demo
+### 6. Register the Foundry Agent (recommended)
+
+This creates a **persistent, named agent** in your Azure AI Foundry
+project and saves its ID to `.env`:
+
+```bash
+python setup_agent.py
+```
+
+The script will:
+1. Start the Playwright MCP server to discover all 28 browser tools
+2. Create a registered agent in your Foundry project with those tools
+3. Save `FOUNDRY_AGENT_ID` to your `.env` file
+
+**Why do this?** A persistent agent shows up in the Azure AI Foundry
+portal under **Agents**, where you can observe:
+
+- Token usage per run (input / output / total)
+- Tool call history and frequency
+- Run success / failure rates
+- Cost breakdown over time
+
+> You can skip this step — `run_demo.py` will still work by creating
+> ephemeral (temporary) agents. But ephemeral agents are deleted after
+> each query, so their usage data is not retained in the portal.
+
+**Other `setup_agent.py` commands:**
+
+```bash
+# Update the agent's tools & instructions (e.g. after MCP version bump)
+python setup_agent.py --update
+
+# Delete and recreate the agent
+python setup_agent.py --recreate
+
+# Show current agent details
+python setup_agent.py --show
+```
+
+### 7. Run the demo
 
 ```bash
 # Run all 3 tiers against a sample product
@@ -264,6 +303,7 @@ ecommerce-mcp-solution-accelerator/
 ├── .vscode/
 │   └── mcp.json              ← VS Code MCP server config (Playwright)
 ├── requirements.txt          ← Python dependencies
+├── setup_agent.py            ← Register a persistent agent in Foundry
 ├── run_demo.py               ← Quick-start demo script
 ├── src/
 │   ├── __init__.py
@@ -305,7 +345,25 @@ For every query, the agent:
 6. **Parses the response** — extracts `KEY: VALUE` lines (price, rating,
    seller, etc.) from the model's final message.
 
-7. **Deletes the ephemeral agent** (cleanup).
+7. **Cleans up** — if using ephemeral mode, deletes the agent. If using
+   a persistent agent (via `setup_agent.py`), the agent stays registered
+   and all run history is retained for observability.
+
+### Observability in Azure AI Foundry Portal
+
+When you use a **persistent agent** (created by `setup_agent.py`), all
+runs are tracked under that agent in the Foundry portal:
+
+| What You Can See | Where |
+|-----------------|-------|
+| Token usage (input/output/total) per run | Agent → Runs → select a run |
+| Tool calls made and their payloads | Agent → Runs → Run details → Steps |
+| Run duration and status (success/failed) | Agent → Runs list |
+| Aggregate usage over time | Project → Usage & Quotas |
+| Model cost breakdown | Azure Portal → Cost Management |
+
+> **Tip:** Each query creates a new **thread** and **run** under the
+> same agent. You can filter runs by time range to compare batches.
 
 ### Tier 1: Public Price
 

@@ -159,9 +159,11 @@ class PlaywrightMCPAgent:
         self,
         config: FoundryConfig | None = None,
         model: str = "",
+        agent_id: str = "",
     ):
         self.config = config or FoundryConfig()
         self.model = model or self.config.model
+        self._persistent_agent_id = agent_id or self.config.agent_id
         self._credential: DefaultAzureCredential | None = None
         self._agents_client: AgentsClient | None = None
         self._connected = False
@@ -184,11 +186,21 @@ class PlaywrightMCPAgent:
             credential=self._credential,
         )
         self._connected = True
-        logger.info(
-            "PlaywrightMCPAgent connected — model=%s endpoint=%s",
-            self.model,
-            self.config.endpoint,
-        )
+        if self._persistent_agent_id:
+            logger.info(
+                "PlaywrightMCPAgent connected (persistent agent=%s) — "
+                "model=%s endpoint=%s",
+                self._persistent_agent_id,
+                self.model,
+                self.config.endpoint,
+            )
+        else:
+            logger.info(
+                "PlaywrightMCPAgent connected (ephemeral mode) — "
+                "model=%s endpoint=%s",
+                self.model,
+                self.config.endpoint,
+            )
         return True
 
     def disconnect(self):
@@ -372,14 +384,25 @@ class PlaywrightMCPAgent:
                     "MCP server ready — %d tools discovered", len(mcp_tools)
                 )
 
-                # ── Create ephemeral Foundry agent ──
-                agent = self._agents_client.create_agent(
-                    model=self.model,
-                    name=f"mcp-agent-{int(time.time())}",
-                    instructions=self._build_system_prompt(),
-                    tools=tool_defs,
-                )
-                agent_id = agent.id
+                # ── Use persistent or ephemeral agent ──
+                use_persistent = bool(self._persistent_agent_id)
+
+                if use_persistent:
+                    # Reuse the registered agent — visible in Foundry
+                    # portal for token/cost observability
+                    agent_id = self._persistent_agent_id
+                    logger.info(
+                        "Reusing persistent agent %s", agent_id
+                    )
+                else:
+                    # Ephemeral agent — created & deleted per query
+                    agent = self._agents_client.create_agent(
+                        model=self.model,
+                        name=f"mcp-agent-{int(time.time())}",
+                        instructions=self._build_system_prompt(),
+                        tools=tool_defs,
+                    )
+                    agent_id = agent.id
 
                 try:
                     # ── Thread + message ──
@@ -489,10 +512,11 @@ class PlaywrightMCPAgent:
                     return response, tool_call_count, screenshot_path
 
                 finally:
-                    try:
-                        self._agents_client.delete_agent(agent_id)
-                    except Exception:
-                        pass
+                    if not use_persistent:
+                        try:
+                            self._agents_client.delete_agent(agent_id)
+                        except Exception:
+                            pass
 
     # ─── MCP result serialisation ────────────────────────────────────
 

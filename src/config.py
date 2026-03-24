@@ -30,6 +30,7 @@ class FoundryConfig:
 
     endpoint: str = os.getenv("FOUNDRY_ENDPOINT", "")
     model: str = os.getenv("FOUNDRY_MODEL", "gpt-5.4")
+    agent_id: str = os.getenv("FOUNDRY_AGENT_ID", "")
 
 
 # ── Locations for Tier 3 (geographic pricing) ───────────────────────────────

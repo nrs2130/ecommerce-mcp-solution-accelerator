@@ -75,9 +75,23 @@
 │                          │                                      │
 │  11. Read assistant messages → raw text                          │
 │  12. _parse_response() → MCPResult dataclass                    │
-│  13. Delete ephemeral agent (finally block)                     │
+│  13. Cleanup:                                                   │
+│      - Persistent mode: agent stays, run history retained       │
+│      - Ephemeral mode: agent deleted (finally block)            │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+## Persistent vs Ephemeral Agent Modes
+
+| Mode | How | Observability | Best For |
+|------|-----|---------------|----------|
+| **Persistent** | `python setup_agent.py` → sets `FOUNDRY_AGENT_ID` in `.env` | Full: token usage, tool calls, cost, run history in Foundry portal | Production, cost tracking, auditing |
+| **Ephemeral** | Default (no `FOUNDRY_AGENT_ID`) | None: agent deleted after each query | Quick testing, one-off runs |
+
+In persistent mode, `setup_agent.py` creates the agent once with all 28
+MCP tools registered. Each query creates a new **thread** and **run**
+under that same agent — the Foundry portal accumulates all run history
+for cost analysis and debugging.
 
 ## Tool Schema Conversion
 
@@ -154,23 +168,3 @@ For production: use Managed Identity — no secrets to manage.
 | `$schema` rejection | Foundry doesn't accept JSON Schema `$schema` key | Stripped in `_mcp_tools_to_function_defs()` |
 | Run status `failed` | Model error, token limit, etc. | Logged and returned as `MCPResult.error` |
 | Geo init-script leaked | Temp file not cleaned up | `finally` block with `os.unlink()` |
-
-## Token Economics
-
-Per-query token breakdown (approximate):
-
-| Component | Input Tokens | Output Tokens |
-|-----------|-------------|---------------|
-| 28 tool schemas | ~3,000–5,000 | — |
-| System prompt | ~200 | — |
-| Tier prompt | ~200–400 | — |
-| Each `browser_snapshot` response | ~2,000–10,000 | — |
-| Model reasoning per iteration | — | ~200–500 |
-| Final structured response | — | ~300–800 |
-| **T1 total (3–5 tool calls)** | **~20,000–40,000** | **~1,000–3,000** |
-| **T2 total per location (5–10 calls)** | **~40,000–80,000** | **~2,000–5,000** |
-| **T3 total per device (3–5 calls)** | **~20,000–40,000** | **~1,000–3,000** |
-
-Context accumulates across the tool-call loop — each iteration carries
-all prior snapshot responses in context. The 60-iteration cap prevents
-runaway costs.
