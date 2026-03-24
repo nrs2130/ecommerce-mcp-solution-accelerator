@@ -9,11 +9,11 @@
 │                                                                 │
 │  agent = PlaywrightMCPAgent(config)                             │
 │  agent.connect()                                                │
-│  results = agent.run_tier(tier=3, product_name=..., site=...)   │
+│  results = agent.run_tier(tier=2, product_name=..., site=...)   │
 └─────────────┬───────────────────────────────────────────────────┘
               │
               │ 1. connect() → DefaultAzureCredential + AgentsClient
-              │ 2. run_tier() → _run_tier3() → _run_async()
+              │ 2. run_tier() → _run_tier2() → _run_async()
               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                    _run_with_mcp() [async]                      │
@@ -101,9 +101,9 @@ MCP format:                          Foundry format:
 
 The `$schema` key **must** be stripped — Azure AI Foundry rejects it.
 
-## Tier 3: Generic Location Prompt
+## Tier 2: Generic Location Prompt
 
-The T3 prompt is the most important design decision. It is **fully
+The T2 prompt is the most important design decision. It is **fully
 generic** — no site-specific CSS selectors, no Amazon/Walmart/Instacart
 branching:
 
@@ -168,8 +168,8 @@ Per-query token breakdown (approximate):
 | Model reasoning per iteration | — | ~200–500 |
 | Final structured response | — | ~300–800 |
 | **T1 total (3–5 tool calls)** | **~20,000–40,000** | **~1,000–3,000** |
-| **T3 total per location (5–10 calls)** | **~40,000–80,000** | **~2,000–5,000** |
-| **T5 total per device (3–5 calls)** | **~20,000–40,000** | **~1,000–3,000** |
+| **T2 total per location (5–10 calls)** | **~40,000–80,000** | **~2,000–5,000** |
+| **T3 total per device (3–5 calls)** | **~20,000–40,000** | **~1,000–3,000** |
 
 Context accumulates across the tool-call loop — each iteration carries
 all prior snapshot responses in context. The 60-iteration cap prevents

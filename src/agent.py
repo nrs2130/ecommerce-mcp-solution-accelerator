@@ -21,12 +21,13 @@ Architecture
 
 Per-tier configuration
 ~~~~~~~~~~~~~~~~~~~~~~
-* **Tier 1 (Public Price):** Default browser, no special context.
-* **Tier 3 (Geo Pricing):** ``--grant-permissions geolocation`` +
+* **Tier 1 (Public Price):** Default browser, no special context.  Deep
+  navigation (search → click → sub-pages) if no direct URL is given.
+* **Tier 2 (Geo Pricing):** ``--grant-permissions geolocation`` +
   ``--init-script`` JS that overrides ``navigator.geolocation``.
   Plus a fully generic prompt that tells the model to find any
   location picker on the page.
-* **Tier 5 (Device Comparison):** ``--device "iPhone 14"`` or
+* **Tier 3 (Device Comparison):** ``--device "iPhone 14"`` or
   ``--viewport-size "1920x1080"`` per device profile — real device
   emulation at the browser level.
 
@@ -70,7 +71,7 @@ SCREENSHOTS_DIR = Path("screenshots")
 SCREENSHOTS_DIR.mkdir(exist_ok=True)
 
 
-# ── Device profiles for Tier 5 ─────────────────────────────────────────────
+# ── Device profiles for Tier 3 ─────────────────────────────────────────────
 
 DEVICE_PROFILES: dict[str, dict[str, str]] = {
     "desktop": {
@@ -562,7 +563,7 @@ class PlaywrightMCPAgent:
 
     @staticmethod
     def _build_t1_prompt(product: str, site: str, url: str) -> str:
-        """Tier 1 — public price extraction."""
+        """Tier 1 — public price extraction (with deep navigation)."""
         return (
             f"Navigate to {url}\n"
             f"Find the product '{product}' on {site}.\n"
@@ -573,14 +574,14 @@ class PlaywrightMCPAgent:
         )
 
     @staticmethod
-    def _build_t3_prompt(
+    def _build_t2_prompt(
         product: str,
         site: str,
         url: str,
         location_label: str,
         postal_code: str = "",
     ) -> str:
-        """Tier 3 — geographic pricing.
+        """Tier 2 — geographic pricing.
 
         This prompt is **fully generic** — suitable for ANY e-commerce
         site.  The model reads the page snapshot and figures out how the
@@ -621,14 +622,14 @@ class PlaywrightMCPAgent:
         )
 
     @staticmethod
-    def _build_t5_prompt(
+    def _build_t3_prompt(
         product: str,
         site: str,
         url: str,
         device_label: str,
         viewport_desc: str = "",
     ) -> str:
-        """Tier 5 — device/channel comparison."""
+        """Tier 3 — device/channel comparison."""
         return (
             f"Navigate to {url}\n"
             f"Find the product '{product}' on {site}.\n"
@@ -662,7 +663,7 @@ class PlaywrightMCPAgent:
         Parameters
         ----------
         tier : int
-            1 = public price, 3 = geographic pricing, 5 = device comparison.
+            1 = public price, 2 = geographic pricing, 3 = device comparison.
         product_name : str
             Human-readable product name (used in prompts and search).
         site : str
@@ -670,14 +671,14 @@ class PlaywrightMCPAgent:
         url : str, optional
             Direct product page URL.  If empty, builds a search URL.
         postal_codes : list[str], optional
-            For tier 3 only — list of ZIP/postal codes to compare.
+            For tier 2 only — list of ZIP/postal codes to compare.
             If omitted, picks 3 random locations from LOCATION_POOL
             matching the site's country.
 
         Returns
         -------
         list[MCPResult]
-            One result per location (T3) or device (T5).
+            One result per location (T2) or device (T3).
             T1 returns a single-element list.
         """
         if not self._connected:
@@ -685,16 +686,17 @@ class PlaywrightMCPAgent:
 
         if tier == 1:
             return [self._run_tier1(product_name, site, url)]
+        elif tier == 2:
+            return self._run_tier2(product_name, site, url, postal_codes)
         elif tier == 3:
-            return self._run_tier3(product_name, site, url, postal_codes)
-        elif tier == 5:
-            return self._run_tier5(product_name, site, url)
+            return self._run_tier3(product_name, site, url)
         else:
             return [self._run_tier1(product_name, site, url)]
 
     # ── Tier 1 ───────────────────────────────────────────────────────
 
     def _run_tier1(self, product: str, site: str, url: str = "") -> MCPResult:
+        """Tier 1 — public price extraction (with deep navigation)."""
         result = MCPResult(query=product, site=site, tier=1)
         start = time.time()
 
@@ -719,9 +721,9 @@ class PlaywrightMCPAgent:
         result.elapsed_seconds = time.time() - start
         return result
 
-    # ── Tier 3 ───────────────────────────────────────────────────────
+    # ── Tier 2 ───────────────────────────────────────────────────────
 
-    def _run_tier3(
+    def _run_tier2(
         self,
         product: str,
         site: str,
@@ -751,7 +753,7 @@ class PlaywrightMCPAgent:
         results: list[MCPResult] = []
 
         for loc in locations:
-            result = MCPResult(query=product, site=site, tier=3)
+            result = MCPResult(query=product, site=site, tier=2)
             start = time.time()
 
             lat = loc.latitude or 39.7392
@@ -759,11 +761,11 @@ class PlaywrightMCPAgent:
             geo_js = self._create_geo_init_script(lat, lon)
 
             location_label = f"{loc.city}, {loc.country} ({loc.code})"
-            prompt = self._build_t3_prompt(
+            prompt = self._build_t2_prompt(
                 product, site, target, location_label,
                 postal_code=loc.code,
             )
-            tag = f"t3_{loc.code}_{product[:20]}"
+            tag = f"t2_{loc.code}_{product[:20]}"
             server_args = self._build_server_args(
                 geolocation={"latitude": lat, "longitude": lon},
                 init_script=geo_js,
@@ -781,7 +783,7 @@ class PlaywrightMCPAgent:
                 result.success = True
             except Exception as exc:
                 result.error = str(exc)
-                logger.error("MCP T3 failed for %s: %s", loc.code, exc)
+                logger.error("MCP T2 failed for %s: %s", loc.code, exc)
             finally:
                 try:
                     os.unlink(geo_js)
@@ -793,14 +795,14 @@ class PlaywrightMCPAgent:
 
         return results
 
-    # ── Tier 5 ───────────────────────────────────────────────────────
+    # ── Tier 3 ───────────────────────────────────────────────────────
 
-    def _run_tier5(self, product: str, site: str, url: str = "") -> list[MCPResult]:
+    def _run_tier3(self, product: str, site: str, url: str = "") -> list[MCPResult]:
         target = url or f"https://www.{site}/s?k={product.replace(' ', '+')}"
         results: list[MCPResult] = []
 
         for profile_key, profile in DEVICE_PROFILES.items():
-            result = MCPResult(query=product, site=site, tier=5)
+            result = MCPResult(query=product, site=site, tier=3)
             start = time.time()
 
             label = profile["label"]
@@ -811,11 +813,11 @@ class PlaywrightMCPAgent:
             else:
                 viewport_desc = ""
 
-            prompt = self._build_t5_prompt(
+            prompt = self._build_t3_prompt(
                 product, site, target, label,
                 viewport_desc=viewport_desc,
             )
-            tag = f"t5_{profile_key}_{product[:20]}"
+            tag = f"t3_{profile_key}_{product[:20]}"
             server_args = self._build_server_args(
                 device=profile["device"],
                 viewport=profile["viewport"],
@@ -833,7 +835,7 @@ class PlaywrightMCPAgent:
                 result.success = True
             except Exception as exc:
                 result.error = str(exc)
-                logger.error("MCP T5 failed for %s: %s", label, exc)
+                logger.error("MCP T3 failed for %s: %s", label, exc)
 
             result.elapsed_seconds = time.time() - start
             results.append(result)

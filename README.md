@@ -9,9 +9,9 @@ code.
 
 | Tier | Capability | How It Works |
 |------|-----------|--------------|
-| **Tier 1** | Public price extraction | Navigate to a product page, read the snapshot, extract price/rating/seller |
-| **Tier 3** | Geographic pricing comparison | Change the delivery location via the site's own UI, then extract the price per location |
-| **Tier 5** | Device/channel comparison | Emulate iPhone, Android, and Desktop viewports — real device profiles, not prompt-only |
+| **Tier 1** | Public price extraction | Navigate to a product page (with deep navigation if necessary), read the snapshot, extract price/rating/seller |
+| **Tier 2** | Geographic pricing comparison | Change the delivery location via the site's own UI, then extract the price per location |
+| **Tier 3** | Device/channel comparison | Emulate iPhone, Android, and Desktop viewports — real device profiles, not prompt-only |
 
 **Key differentiator:** The agent uses one generic prompt for all sites.
 It reads the page's accessibility tree (`browser_snapshot`) and
@@ -46,13 +46,17 @@ location mechanism.
                    │  Tool call results (text / screenshots)
                    ▼
 ┌───────────────────────────────────────────────────────────┐
-│           Playwright MCP Server (local)                   │
+│           Playwright MCP Server                           │
 │                                                           │
-│  Node.js process: npx @playwright/mcp@latest              │
-│  Runs headless/headed Chromium on your machine            │
-│  Exposes tools over stdio via MCP protocol                │
+│  LOCAL (dev/testing):                                     │
+│    npx @playwright/mcp@latest  (stdio transport)          │
+│    Runs Chromium on your machine — free, fast iteration   │
 │                                                           │
-│  No Azure resource needed — just npm + Node.js            │
+│  CLOUD (production):                                      │
+│    Docker container on Azure Container Apps               │
+│    SSE transport (--port 3000) over HTTPS                 │
+│    See "Moving to Production" section below               │
+│                                                           │
 └───────────────────────────────────────────────────────────┘
 ```
 
@@ -68,21 +72,22 @@ You need **two things**: an Azure AI Foundry project (cloud) and Node.js
 This is where your GPT-5.4 model runs. You need:
 
 - An **Azure subscription**
-- An **Azure AI Foundry hub** and **project**
+- An **Azure AI Foundry project** (the portal creates underlying
+  resources automatically)
 - A **GPT model deployment** (e.g. `gpt-5.4`)
 
 #### Step-by-step setup
 
 | Step | Action | Link |
 |------|--------|------|
-| 1 | **Create an Azure AI Foundry hub** | [Create a hub](https://learn.microsoft.com/azure/ai-foundry/how-to/create-hub-project) |
-| 2 | **Create a project** in that hub | [Create a project](https://learn.microsoft.com/azure/ai-foundry/how-to/create-projects) |
+| 1 | **Sign in to Azure AI Foundry** at [ai.azure.com](https://ai.azure.com) | [Azure AI Foundry portal](https://ai.azure.com) |
+| 2 | **Create a new project** — the portal provisions the required resources for you | [Create a project](https://learn.microsoft.com/azure/ai-foundry/how-to/create-projects) |
 | 3 | **Deploy a GPT model** (e.g. `gpt-5.4` or `gpt-4.1`) | [Deploy a model](https://learn.microsoft.com/azure/ai-foundry/how-to/deploy-models-openai) |
 | 4 | **Copy your project endpoint** | Found in AI Foundry portal → Project → Overview → "Project endpoint" |
 | 5 | **Authenticate** | `az login` for local dev, or Managed Identity for production. See [DefaultAzureCredential](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential) |
 
 > **Your endpoint** will look like:
-> `https://<hub-name>.services.ai.azure.com/api/projects/<project-name>`
+> `https://<your-project>.services.ai.azure.com/api/projects/<project-name>`
 
 #### Azure AI Foundry Agents documentation
 
@@ -94,15 +99,16 @@ This is where your GPT-5.4 model runs. You need:
 | Function calling with agents | [Function tools](https://learn.microsoft.com/azure/ai-services/agents/how-to/tools/function-calling) |
 | Authentication & identity | [DefaultAzureCredential](https://learn.microsoft.com/python/api/azure-identity/azure.identity.defaultazurecredential) |
 
-### 2. Node.js + Playwright MCP Server
+### 2. Node.js + Playwright MCP Server (Local — for Development & Testing)
 
-The Playwright MCP Server is an **npm package** that runs locally. It
-spawns a Chromium browser and exposes it as MCP tools over stdio.
+The Playwright MCP Server is an **npm package** that runs locally during
+development.  It spawns a Chromium browser and exposes it as MCP tools
+over stdio.
 
-> **You do NOT need to create an Azure Playwright Testing resource.**
-> The MCP server is a local Node.js process — completely free and
-> open-source. Azure Playwright Testing is a separate (optional) service
-> for running browsers in the cloud.
+> **For initial testing and development, running locally is the
+> recommended starting point.** No cloud browser infrastructure is
+> required. See [Moving to Production](#moving-to-production-cloud-hosted-mcp)
+> below when you're ready to deploy.
 
 #### Install Node.js
 
@@ -136,13 +142,21 @@ exposes ~28 browser tools over stdio.
 | Geolocation (`--grant-permissions`) | [Playwright geolocation](https://playwright.dev/docs/emulation#geolocation) |
 | MCP protocol spec | [modelcontextprotocol.io](https://modelcontextprotocol.io/) |
 
-#### Optional: VS Code MCP integration
+### 3. VS Code MCP Integration
 
-If you want to use Playwright MCP interactively in VS Code (e.g. with
-GitHub Copilot), you can install it as an MCP server:
+If your team uses **GitHub Copilot** in VS Code, you can register
+Playwright MCP as a tool server so Copilot can interact with real
+browsers during chat sessions.
+
+#### Point-and-click setup
+
+1. Open VS Code → **Settings** (Ctrl+, / Cmd+,)
+2. Search for `mcp` in the settings search bar
+3. Under **Chat > MCP**, click **Edit in settings.json**
+4. Add the Playwright MCP server:
 
 ```json
-// .vscode/mcp.json
+// .vscode/mcp.json  (workspace-level)
 {
   "mcpServers": {
     "playwright": {
@@ -153,10 +167,22 @@ GitHub Copilot), you can install it as an MCP server:
 }
 ```
 
-But for this solution accelerator, the Python code manages the MCP
-server programmatically — no VS Code setup required.
+5. Restart VS Code. In the Copilot Chat panel, you'll see the Playwright
+   tools listed under the MCP tools icon.
 
-### 3. Python Environment
+> **Tip:** You can also create this file at the workspace root
+> (`.vscode/mcp.json`) and commit it so every team member gets the
+> same MCP configuration automatically.
+
+#### VS Code MCP documentation
+
+| Topic | Link |
+|-------|------|
+| VS Code MCP support | [Use MCP servers in VS Code](https://code.visualstudio.com/docs/copilot/chat/mcp-servers) |
+| Copilot Chat tools | [Chat with tools](https://code.visualstudio.com/docs/copilot/chat/chat-tools) |
+| Playwright MCP in VS Code | [Playwright MCP README](https://github.com/microsoft/playwright-mcp#vs-code) |
+
+### 4. Python Environment
 
 | Requirement | Version |
 |-------------|---------|
@@ -219,8 +245,8 @@ python run_demo.py --tier 1 --site amazon.in \
     --product "Neutrogena Hydro Boost Water Gel" \
     --url "https://www.amazon.in/dp/B00BQFTQW6"
 
-# Tier 3 with specific postal codes
-python run_demo.py --tier 3 --site amazon.in \
+# Tier 2 with specific postal codes
+python run_demo.py --tier 2 --site amazon.in \
     --product "Clean & Clear Facial Wash 150 ml" \
     --url "https://www.amazon.in/dp/B00CI3HDMU" \
     --postal-codes "110001,400001,560001"
@@ -235,6 +261,8 @@ ecommerce-mcp-solution-accelerator/
 ├── README.md                 ← You are here
 ├── .env.example              ← Template for environment variables
 ├── .gitignore
+├── .vscode/
+│   └── mcp.json              ← VS Code MCP server config (Playwright)
 ├── requirements.txt          ← Python dependencies
 ├── run_demo.py               ← Quick-start demo script
 ├── src/
@@ -282,12 +310,15 @@ For every query, the agent:
 ### Tier 1: Public Price
 
 - Default browser, no special flags
+- **Supports deep navigation:** if the URL leads to a search page or
+  category page, the agent will click through to the correct product
+  detail page autonomously
 - Prompt: "Navigate to {url}, find the product, take a screenshot,
   extract the price"
 - GPT calls `browser_navigate` → `browser_snapshot` →
   `browser_take_screenshot` → returns structured data
 
-### Tier 3: Geographic Pricing
+### Tier 2: Geographic Pricing
 
 For each postal code:
 
@@ -301,7 +332,7 @@ For each postal code:
   verifies the update, then extracts pricing
 - **This works on any site** — no CSS selectors, no site-specific code
 
-### Tier 5: Device Comparison
+### Tier 3: Device Comparison
 
 For each device (Desktop, iPhone 14, Pixel 5):
 
@@ -409,22 +440,8 @@ environments.
 ### How do I add a new e-commerce site?
 
 Just add a `Product` entry with the new site's domain.
-**No code changes needed.** The generic T3 prompt handles any site's
-location picker, and T1/T5 work out of the box.
-
----
-
-## Estimated Costs
-
-| Scenario | Queries/Day | Est. Monthly |
-|----------|------------|-------------|
-| **S — Light** (T1 only, 15 SKUs) | 15 | ~$10–25 |
-| **M — Standard** (T1+T3, 15 SKUs, 3 locations) | 60 | ~$50–120 |
-| **L — Full** (all tiers, 15 SKUs, 3 locs, 3 devices) | 150 | ~$120–300 |
-| **XL — Scale** (100 SKUs, all tiers, 2x/day) | 2,000 | ~$1,000–2,500 |
-
-Main cost driver is GPT tokens. The Playwright MCP server and local
-browser are free.
+**No code changes needed.** The generic Tier 2 prompt handles any site's
+location picker, and Tier 1/Tier 3 work out of the box.
 
 ---
 
@@ -442,6 +459,9 @@ browser are free.
 | Playwright MCP (GitHub) | [microsoft/playwright-mcp](https://github.com/microsoft/playwright-mcp) |
 | MCP protocol | [modelcontextprotocol.io](https://modelcontextprotocol.io/) |
 | Playwright device emulation | [Playwright emulation](https://playwright.dev/docs/emulation) |
+| VS Code MCP servers | [Use MCP servers in VS Code](https://code.visualstudio.com/docs/copilot/chat/mcp-servers) |
+| Azure Container Apps | [Container Apps docs](https://learn.microsoft.com/azure/container-apps/) |
+| Playwright Docker images | [Playwright Docker](https://playwright.dev/docs/docker) |
 
 ---
 

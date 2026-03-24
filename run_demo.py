@@ -48,7 +48,7 @@ def main():
     )
     parser.add_argument(
         "--tier", type=int, default=0,
-        help="Tier to run: 1 (public price), 3 (geo pricing), 5 (device). "
+        help="Tier to run: 1 (public price), 2 (geo pricing), 3 (device). "
              "Default: run all three.",
     )
     parser.add_argument("--product", type=str, default="")
@@ -57,7 +57,7 @@ def main():
     parser.add_argument("--model", type=str, default="")
     parser.add_argument(
         "--postal-codes", type=str, default="",
-        help="Comma-separated postal codes for Tier 3 "
+        help="Comma-separated postal codes for Tier 2 "
              "(e.g. '110001,400001,560001')",
     )
     args = parser.parse_args()
@@ -77,7 +77,7 @@ def main():
     agent = PlaywrightMCPAgent(config=config, model=args.model or "")
     agent.connect()
 
-    tiers_to_run = [args.tier] if args.tier else [1, 3, 5]
+    tiers_to_run = [args.tier] if args.tier else [1, 2, 3]
 
     all_results: list[MCPResult] = []
 
@@ -91,7 +91,7 @@ def main():
             product_name=product,
             site=site,
             url=url,
-            postal_codes=postal_codes if tier == 3 else None,
+            postal_codes=postal_codes if tier == 2 else None,
         )
 
         for r in results:
