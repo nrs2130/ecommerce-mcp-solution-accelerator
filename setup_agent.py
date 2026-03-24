@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
 """
-setup_agent.py — Register a persistent Foundry Agent
-=====================================================
+setup_agent.py — Register a persistent Foundry Agent (v2 API)
+=============================================================
 
-Creates a named, persistent agent in your Azure AI Foundry project with
+Creates a named, versioned agent in your Microsoft Foundry project with
 all 28 Playwright MCP browser tools pre-registered.  The agent appears
-in the Foundry portal under **Agents** where you can observe:
+in the Foundry portal under **Agents → New agents** where you can:
 
-- Token usage per run
-- Tool call history
-- Cost breakdown
-- Run success/failure rates
+- Observe token usage per run
+- View tool call history
+- Track cost breakdown
+- Monitor run success/failure rates
 
-The agent ID is written to your ``.env`` file so subsequent runs of
-``run_demo.py`` (and your own code) reuse it — no more ephemeral
-create/delete per query.
+The new API identifies agents by **name + version** (not by ID).  The
+agent name is written to your ``.env`` file so subsequent runs of
+``run_demo.py`` (and your own code) reuse it automatically.
 
 Usage::
 
-    # First time — creates the agent and writes FOUNDRY_AGENT_ID to .env
+    # First time — creates the agent and writes FOUNDRY_AGENT_NAME to .env
     python setup_agent.py
 
-    # Re-run — updates the existing agent's tools & instructions
+    # Re-run — creates a new version of the same agent
     python setup_agent.py --update
 
     # Force re-create (deletes old, creates new)
@@ -34,6 +34,9 @@ Prerequisites:
     - .env configured with FOUNDRY_ENDPOINT and FOUNDRY_MODEL
     - ``az login`` completed (or env vars for service principal)
     - Node.js 18+ installed (for MCP tool discovery)
+
+Requires:
+    pip install azure-ai-projects>=2.0.0 azure-identity python-dotenv mcp
 """
 
 from __future__ import annotations
@@ -44,14 +47,17 @@ import json
 import logging
 import os
 import platform
-import re
 import shutil
 import sys
 import time
 
 from dotenv import load_dotenv, set_key
 from azure.identity import DefaultAzureCredential
-from azure.ai.agents import AgentsClient
+from azure.ai.projects import AIProjectClient
+from azure.ai.projects.models import (
+    PromptAgentDefinition,
+    FunctionTool,
+)
 from mcp import StdioServerParameters, ClientSession
 from mcp.client.stdio import stdio_client
 
@@ -103,27 +109,27 @@ def build_system_prompt() -> str:
 
 # ── MCP tool discovery ──────────────────────────────────────────────────────
 
-def mcp_tools_to_function_defs(mcp_tools) -> list[dict]:
-    """Convert MCP tool schemas → Azure FunctionToolDefinition dicts."""
-    defs: list[dict] = []
+def mcp_tools_to_function_tools(mcp_tools) -> list[FunctionTool]:
+    """Convert MCP tool schemas → azure-ai-projects FunctionTool objects."""
+    tools: list[FunctionTool] = []
     for tool in mcp_tools:
         schema = tool.inputSchema or {"type": "object", "properties": {}}
         schema = {k: v for k, v in schema.items() if k != "$schema"}
-        defs.append({
-            "type": "function",
-            "function": {
-                "name": tool.name,
-                "description": (
+        tools.append(
+            FunctionTool(
+                name=tool.name,
+                description=(
                     tool.description or f"Playwright MCP tool: {tool.name}"
                 ),
-                "parameters": schema,
-            },
-        })
-    return defs
+                parameters=schema,
+                strict=False,
+            )
+        )
+    return tools
 
 
-async def discover_mcp_tools() -> list[dict]:
-    """Start the Playwright MCP server, list tools, return Foundry defs."""
+async def discover_mcp_tools() -> list[FunctionTool]:
+    """Start the Playwright MCP server, list tools, return FunctionTool defs."""
     if platform.system() == "Windows":
         npx_cmd = r"C:\Program Files\nodejs\npx.cmd"
         if not os.path.isfile(npx_cmd):
@@ -149,39 +155,41 @@ async def discover_mcp_tools() -> list[dict]:
             await session.initialize()
             mcp_tools = (await session.list_tools()).tools
             logger.info("Discovered %d MCP tools", len(mcp_tools))
-            return mcp_tools_to_function_defs(mcp_tools)
+            return mcp_tools_to_function_tools(mcp_tools)
 
 
 # ── Agent management ─────────────────────────────────────────────────────────
 
-def get_existing_agent_id() -> str:
-    """Read FOUNDRY_AGENT_ID from environment / .env."""
-    return os.getenv("FOUNDRY_AGENT_ID", "").strip()
+def get_existing_agent_name() -> str:
+    """Read FOUNDRY_AGENT_NAME from environment / .env."""
+    return os.getenv("FOUNDRY_AGENT_NAME", "").strip()
 
 
-def save_agent_id(agent_id: str) -> None:
-    """Write FOUNDRY_AGENT_ID to the .env file."""
+def save_agent_name(agent_name: str) -> None:
+    """Write FOUNDRY_AGENT_NAME to the .env file."""
     if os.path.exists(ENV_FILE):
-        set_key(ENV_FILE, "FOUNDRY_AGENT_ID", agent_id)
-        logger.info("Saved FOUNDRY_AGENT_ID=%s to %s", agent_id, ENV_FILE)
+        set_key(ENV_FILE, "FOUNDRY_AGENT_NAME", agent_name)
+        logger.info("Saved FOUNDRY_AGENT_NAME=%s to %s", agent_name, ENV_FILE)
     else:
-        # Create .env if it doesn't exist
         with open(ENV_FILE, "a") as f:
-            f.write(f"\nFOUNDRY_AGENT_ID={agent_id}\n")
-        logger.info("Created %s with FOUNDRY_AGENT_ID=%s", ENV_FILE, agent_id)
+            f.write(f"\nFOUNDRY_AGENT_NAME={agent_name}\n")
+        logger.info("Created %s with FOUNDRY_AGENT_NAME=%s", ENV_FILE, agent_name)
 
 
 def create_agent(
-    client: AgentsClient,
+    project: AIProjectClient,
     model: str,
-    tool_defs: list[dict],
-) -> str:
-    """Create a new persistent agent and return its ID."""
-    agent = client.create_agent(
-        model=model,
-        name=AGENT_NAME,
-        instructions=build_system_prompt(),
-        tools=tool_defs,
+    tool_defs: list[FunctionTool],
+) -> tuple[str, str]:
+    """Create a new agent version and return (name, version)."""
+    agent = project.agents.create_version(
+        agent_name=AGENT_NAME,
+        definition=PromptAgentDefinition(
+            model=model,
+            instructions=build_system_prompt(),
+            tools=tool_defs,
+        ),
+        description=AGENT_DESCRIPTION,
         metadata={
             "created_by": "setup_agent.py",
             "purpose": "e-commerce-price-monitoring",
@@ -189,43 +197,20 @@ def create_agent(
         },
     )
     logger.info(
-        "Created persistent agent: id=%s  name=%s  model=%s",
-        agent.id, agent.name, model,
+        "Created agent: name=%s  version=%s  model=%s",
+        agent.name, agent.version, model,
     )
-    return agent.id
+    return agent.name, agent.version
 
 
-def update_agent(
-    client: AgentsClient,
-    agent_id: str,
-    model: str,
-    tool_defs: list[dict],
-) -> str:
-    """Update an existing agent's tools and instructions."""
-    agent = client.update_agent(
-        agent_id=agent_id,
-        model=model,
-        name=AGENT_NAME,
-        instructions=build_system_prompt(),
-        tools=tool_defs,
-        metadata={
-            "updated_by": "setup_agent.py",
-            "purpose": "e-commerce-price-monitoring",
-            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        },
-    )
-    logger.info("Updated agent %s — tools and instructions refreshed", agent_id)
-    return agent.id
-
-
-def delete_agent(client: AgentsClient, agent_id: str) -> bool:
-    """Delete an agent by ID. Returns True if successful."""
+def delete_agent(project: AIProjectClient, agent_name: str) -> bool:
+    """Delete an agent by name. Returns True if successful."""
     try:
-        client.delete_agent(agent_id)
-        logger.info("Deleted agent %s", agent_id)
+        project.agents.delete(agent_name=agent_name)
+        logger.info("Deleted agent %s", agent_name)
         return True
     except Exception as exc:
-        logger.warning("Could not delete agent %s: %s", agent_id, exc)
+        logger.warning("Could not delete agent %s: %s", agent_name, exc)
         return False
 
 
@@ -241,7 +226,7 @@ def main():
     )
     parser.add_argument(
         "--update", action="store_true",
-        help="Update the existing agent (refresh tools & instructions)",
+        help="Create a new version of the existing agent (refresh tools & instructions)",
     )
     parser.add_argument(
         "--recreate", action="store_true",
@@ -268,25 +253,32 @@ def main():
     print()
 
     credential = DefaultAzureCredential()
-    client = AgentsClient(endpoint=endpoint, credential=credential)
-    existing_id = get_existing_agent_id()
+    project = AIProjectClient(endpoint=endpoint, credential=credential)
+    existing_name = get_existing_agent_name()
 
     # ── Show mode ──
     if args.show:
-        if not existing_id:
-            print("  No FOUNDRY_AGENT_ID found in .env")
-            sys.exit(0)
+        name_to_show = existing_name or AGENT_NAME
         try:
-            agent = client.get_agent(existing_id)
-            print(f"  Agent ID    : {agent.id}")
-            print(f"  Name        : {agent.name}")
-            print(f"  Model       : {agent.model}")
-            print(f"  Tools       : {len(agent.tools)} registered")
-            print(f"  Created     : {agent.created_at}")
+            agent = project.agents.get(agent_name=name_to_show)
+            print(f"  Agent Name     : {agent.name}")
+            desc = getattr(agent, "description", None) or "(none)"
+            print(f"  Description    : {desc}")
+            # List versions
+            versions = list(project.agents.list_versions(agent_name=name_to_show))
+            if versions:
+                latest = versions[0]
+                print(f"  Latest Version : {latest.version}")
+                defn = latest.definition
+                defn_model = defn.get("model", "N/A") if hasattr(defn, "get") else getattr(defn, "model", "N/A")
+                defn_tools = defn.get("tools", []) if hasattr(defn, "get") else getattr(defn, "tools", [])
+                print(f"  Model          : {defn_model}")
+                print(f"  Tools          : {len(defn_tools)} registered")
+                print(f"  Created        : {latest.created_at}")
             print(f"\n  View in portal:")
             print(f"  {endpoint.rsplit('/api/', 1)[0]}")
         except Exception as exc:
-            print(f"  Could not fetch agent {existing_id}: {exc}")
+            print(f"  Could not fetch agent '{name_to_show}': {exc}")
         sys.exit(0)
 
     # ── Discover MCP tools ──
@@ -295,44 +287,50 @@ def main():
 
     # Print tool names for confirmation
     for i, td in enumerate(tool_defs, 1):
-        print(f"    {i:2d}. {td['function']['name']}")
+        print(f"    {i:2d}. {td.name}")
     print()
 
     # ── Recreate mode ──
-    if args.recreate and existing_id:
-        print(f"  Deleting existing agent {existing_id}...")
-        delete_agent(client, existing_id)
-        existing_id = ""
+    if args.recreate and existing_name:
+        print(f"  Deleting existing agent '{existing_name}'...")
+        delete_agent(project, existing_name)
 
-    # ── Update mode ──
-    if args.update and existing_id:
-        print(f"  Updating agent {existing_id}...")
-        agent_id = update_agent(client, existing_id, model, tool_defs)
-        save_agent_id(agent_id)
-        print(f"\n  Agent updated: {agent_id}")
-        print(f"  View in Azure AI Foundry portal → Agents\n")
+    # ── Update mode — creates a new version of the same agent ──
+    if args.update:
+        agent_name = existing_name or AGENT_NAME
+        print(f"  Creating new version of '{agent_name}'...")
+        name, version = create_agent(project, model, tool_defs)
+        save_agent_name(name)
+        print(f"\n  Agent updated: {name} v{version}")
+        print(f"  View in Microsoft Foundry portal → Agents\n")
         return
 
     # ── Create mode (default) ──
-    if existing_id and not args.recreate:
-        print(f"  Agent already exists: {existing_id}")
-        print(f"  Use --update to refresh tools, or --recreate to replace.\n")
-        return
+    if existing_name and not args.recreate:
+        # Check if agent actually exists on the server
+        try:
+            project.agents.get(agent_name=existing_name)
+            print(f"  Agent already exists: {existing_name}")
+            print(f"  Use --update to create a new version, or --recreate to replace.\n")
+            return
+        except Exception:
+            # Agent was deleted externally — proceed to create
+            pass
 
     print("  Creating persistent agent...")
-    agent_id = create_agent(client, model, tool_defs)
-    save_agent_id(agent_id)
+    name, version = create_agent(project, model, tool_defs)
+    save_agent_name(name)
 
     print(f"\n  {'=' * 56}")
     print(f"  Agent registered successfully!")
     print(f"  {'=' * 56}")
-    print(f"  Agent ID : {agent_id}")
-    print(f"  Model    : {model}")
-    print(f"  Tools    : {len(tool_defs)}")
-    print(f"  Name     : {AGENT_NAME}")
+    print(f"  Agent Name : {name}")
+    print(f"  Version    : {version}")
+    print(f"  Model      : {model}")
+    print(f"  Tools      : {len(tool_defs)}")
     print(f"\n  Saved to : {ENV_FILE}")
     print(f"\n  Next steps:")
-    print(f"    1. View your agent in the Azure AI Foundry portal → Agents")
+    print(f"    1. View your agent in the Microsoft Foundry portal → Agents")
     print(f"    2. Run:  python run_demo.py")
     print(f"       (it will reuse this persistent agent automatically)")
     print(f"    3. Check token usage & cost in the portal after runs\n")

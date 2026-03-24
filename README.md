@@ -627,6 +627,128 @@ async with sse_client(
 
 ---
 
+## Accelerator Path: Foundry-Native MCP Agent (v2 API)
+
+The current architecture uses a **client-side tool-call loop** — your Python
+code starts a local MCP server, discovers tools, creates an ephemeral Foundry
+agent, and proxies every tool call through your machine.
+
+Microsoft Foundry's **v2 Agent API** supports a fully server-side alternative:
+register the Playwright MCP server as a native **`MCPTool`** on the agent.
+Foundry calls the MCP server directly — no local proxy, no tool-call loop in
+your code.
+
+### Architecture comparison
+
+```
+  Current (client-side loop)              Accelerator (Foundry-native MCPTool)
+  ════════════════════════════            ══════════════════════════════════════
+
+  ┌──────────────┐                        ┌──────────────┐
+  │  Your Python  │                        │  Your Python  │
+  │  run_demo.py  │                        │  (minimal)    │
+  └──────┬───────┘                        └──────┬───────┘
+         │ 1. Start MCP (stdio)                   │ 1. Create conversation
+         │ 2. Discover 28 tools                   │ 2. Send prompt
+         │ 3. Create agent + thread               │ 3. Approve MCP calls
+         │ 4. Poll run status                     │ 4. Read response
+         │ 5. Proxy tool calls ←→ MCP             │
+         │ 6. Return response                     │
+         ▼                                        ▼
+  ┌──────────────┐                        ┌───────────────────┐
+  │ Local MCP    │                        │  Microsoft Foundry │
+  │ (npx stdio)  │                        │  Agent Service     │
+  │ + Chromium   │                        │  (server-side)     │
+  └──────────────┘                        └────────┬──────────┘
+                                                   │ MCP over HTTPS
+                                                   ▼
+                                          ┌───────────────────┐
+                                          │ Azure Container   │
+                                          │ Apps (Playwright  │
+                                          │ MCP + Chromium)   │
+                                          └───────────────────┘
+```
+
+### What changes
+
+| Component | Current | Foundry-native MCPTool |
+|-----------|---------|----------------------|
+| SDK | `azure-ai-agents` 1.x (classic) | `azure-ai-projects` 2.x (v2) |
+| Agent identity | Agent ID | Agent name + version |
+| Tool registration | 28 × `FunctionTool` defs | 1 × `MCPTool(server_url=...)` |
+| Tool execution | Client-side proxy via `mcp.ClientSession` | Foundry runtime calls MCP server directly |
+| MCP transport | stdio (local `npx`) | HTTPS (remote Container App) |
+| Tool approval | Automatic (client code) | `require_approval="never"` or interactive |
+| Portal visibility | Classic agents list | New agents list with MCP tool connection |
+| Local dependencies | Node.js + Chromium | None (all cloud-hosted) |
+
+### Implementation steps (future)
+
+**Step 1 — Host Playwright MCP on Azure Container Apps** (see section above)
+
+**Step 2 — Register the agent with `MCPTool`**
+
+```python
+from azure.ai.projects import AIProjectClient
+from azure.ai.projects.models import PromptAgentDefinition, MCPTool
+from azure.identity import DefaultAzureCredential
+
+project = AIProjectClient(
+    endpoint="https://your-hub.services.ai.azure.com/api/projects/your-project",
+    credential=DefaultAzureCredential(),
+)
+
+# Register an MCPTool pointing to the cloud-hosted Playwright server
+tool = MCPTool(
+    server_label="playwright",
+    server_url="https://playwright-mcp.<id>.<region>.azurecontainerapps.io/mcp",
+    require_approval="never",
+)
+
+agent = project.agents.create_version(
+    agent_name="ecommerce-mcp-price-monitor",
+    definition=PromptAgentDefinition(
+        model="gpt-5.4",
+        instructions="You are an e-commerce pricing agent. Use the Playwright "
+                     "browser tools to navigate pages and extract pricing data.",
+        tools=[tool],
+    ),
+)
+print(f"Agent: {agent.name} v{agent.version}")
+```
+
+**Step 3 — Chat with the agent using the Responses API**
+
+```python
+openai = project.get_openai_client()
+
+conversation = openai.conversations.create()
+response = openai.responses.create(
+    conversation=conversation.id,
+    input="Navigate to https://www.amazon.in/dp/B00BQFTQW6 and extract the price",
+    extra_body={
+        "agent_reference": {
+            "name": "ecommerce-mcp-price-monitor",
+            "type": "agent_reference",
+        }
+    },
+)
+print(response.output_text)
+```
+
+### Key documentation
+
+| Topic | Link |
+|-------|------|
+| Foundry quickstart (v2 SDK) | [Get started with code](https://learn.microsoft.com/azure/foundry/quickstarts/get-started-code?tabs=python) |
+| Connect agents to MCP servers | [MCP tool docs](https://learn.microsoft.com/azure/foundry/agents/how-to/tools/model-context-protocol?pivots=python) |
+| MCP server authentication | [MCP authentication](https://learn.microsoft.com/azure/foundry/agents/how-to/mcp-authentication) |
+| Host local MCP on Azure | [Container Apps](https://github.com/Azure-Samples/mcp-container-ts) / [Azure Functions](https://github.com/Azure-Samples/mcp-sdk-functions-hosting-python) |
+| Enterprise agent tutorial | [Idea to prototype](https://learn.microsoft.com/azure/foundry/tutorials/developer-journey-idea-to-prototype?tabs=python) |
+| Private MCP networking | [Virtual networks](https://learn.microsoft.com/azure/foundry/agents/how-to/virtual-networks) |
+
+---
+
 ## Additional Microsoft Learn Documentation
 
 | Topic | Link |
