@@ -1,0 +1,14 @@
+# E-Commerce MCP Solution Accelerator — Python dependencies
+#
+# Install:  pip install -r requirements.txt
+
+# Azure AI Foundry Agents SDK
+azure-ai-agents>=1.0.0
+azure-ai-projects>=1.0.0
+azure-identity>=1.15.0
+
+# Model Context Protocol (MCP) client
+mcp>=1.0.0
+
+# Environment variable loading
+python-dotenv>=1.0.0

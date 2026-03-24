@@ -1,0 +1,21 @@
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Screenshots from runs
+screenshots/*.png
+
+# Results export
+results.json
+
+# Temp geo init scripts
+geo_mcp_*.js
+
+# Node modules (should not exist, but just in case)
+node_modules/
