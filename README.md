@@ -28,10 +28,10 @@ location mechanism.
 │                    Your Python Code                       │
 │                  (run_demo.py / your app)                 │
 └──────────────────┬────────────────────────────────────────┘
-                   │  HTTP (Azure AI Foundry Agents API)
+                   │  HTTP (Microsoft Foundry Agents API)
                    ▼
 ┌───────────────────────────────────────────────────────────┐
-│              Azure AI Foundry (cloud)                     │
+│              Microsoft Foundry (cloud)                     │
 │                                                           │
 │  ┌─────────────────────────────────────────────────────┐  │
 │  │  GPT-5.4 Agent                                      │  │
@@ -64,15 +64,15 @@ location mechanism.
 
 ## Prerequisites
 
-You need **two things**: an Azure AI Foundry project (cloud) and Node.js
+You need **two things**: an Microsoft Foundry project (cloud) and Node.js
 (local).
 
-### 1. Azure AI Foundry + GPT Model Deployment
+### 1. Microsoft Foundry + GPT Model Deployment
 
 This is where your GPT-5.4 model runs. You need:
 
 - An **Azure subscription**
-- An **Azure AI Foundry project** (the portal creates underlying
+- An **Microsoft Foundry project** (the portal creates underlying
   resources automatically)
 - A **GPT model deployment** (e.g. `gpt-5.4`)
 
@@ -80,7 +80,7 @@ This is where your GPT-5.4 model runs. You need:
 
 | Step | Action | Link |
 |------|--------|------|
-| 1 | **Sign in to Azure AI Foundry** at [ai.azure.com](https://ai.azure.com) | [Azure AI Foundry portal](https://ai.azure.com) |
+| 1 | **Sign in to Microsoft Foundry** at [ai.azure.com](https://ai.azure.com) | [Microsoft Foundry portal](https://ai.azure.com) |
 | 2 | **Create a new project** — the portal provisions the required resources for you | [Create a project](https://learn.microsoft.com/azure/ai-foundry/how-to/create-projects) |
 | 3 | **Deploy a GPT model** (e.g. `gpt-5.4` or `gpt-4.1`) | [Deploy a model](https://learn.microsoft.com/azure/ai-foundry/how-to/deploy-models-openai) |
 | 4 | **Copy your project endpoint** | Found in AI Foundry portal → Project → Overview → "Project endpoint" |
@@ -89,11 +89,11 @@ This is where your GPT-5.4 model runs. You need:
 > **Your endpoint** will look like:
 > `https://<your-project>.services.ai.azure.com/api/projects/<project-name>`
 
-#### Azure AI Foundry Agents documentation
+#### Microsoft Foundry Agents documentation
 
 | Topic | Link |
 |-------|------|
-| What are Azure AI Foundry Agents? | [Overview](https://learn.microsoft.com/azure/ai-services/agents/overview) |
+| What are Microsoft Foundry Agents? | [Overview](https://learn.microsoft.com/azure/ai-services/agents/overview) |
 | Quickstart: Create an agent | [Quickstart](https://learn.microsoft.com/azure/ai-services/agents/quickstart) |
 | Agents SDK for Python | [Python SDK](https://learn.microsoft.com/python/api/overview/azure/ai-agents-readme) |
 | Function calling with agents | [Function tools](https://learn.microsoft.com/azure/ai-services/agents/how-to/tools/function-calling) |
@@ -222,7 +222,7 @@ pip install -r requirements.txt
 
 ```bash
 cp .env.example .env
-# Edit .env with your Azure AI Foundry endpoint and model name
+# Edit .env with your Microsoft Foundry endpoint and model name
 ```
 
 ### 5. Authenticate with Azure
@@ -236,7 +236,7 @@ production, use [Managed Identity](https://learn.microsoft.com/entra/identity/ma
 
 ### 6. Register the Foundry Agent (recommended)
 
-This creates a **persistent, named agent** in your Azure AI Foundry
+This creates a **persistent, named agent** in your Microsoft Foundry
 project and saves its ID to `.env`:
 
 ```bash
@@ -248,7 +248,7 @@ The script will:
 2. Create a registered agent in your Foundry project with those tools
 3. Save `FOUNDRY_AGENT_ID` to your `.env` file
 
-**Why do this?** A persistent agent shows up in the Azure AI Foundry
+**Why do this?** A persistent agent shows up in the Microsoft Foundry
 portal under **Agents**, where you can observe:
 
 - Token usage per run (input / output / total)
@@ -330,7 +330,7 @@ For every query, the agent:
    tools like `browser_navigate`, `browser_click`, `browser_type`,
    `browser_snapshot`, `browser_take_screenshot`, `browser_fill`, etc.
 
-3. **Creates an ephemeral GPT agent** in Azure AI Foundry with all 28
+3. **Creates an ephemeral GPT agent** in Microsoft Foundry with all 28
    tools registered as callable functions.
 
 4. **Sends the prompt** (product name, URL, tier-specific instructions).
@@ -349,7 +349,7 @@ For every query, the agent:
    a persistent agent (via `setup_agent.py`), the agent stays registered
    and all run history is retained for observability.
 
-### Observability in Azure AI Foundry Portal
+### Observability in Microsoft Foundry Portal
 
 When you use a **persistent agent** (created by `setup_agent.py`), all
 runs are tracked under that agent in the Foundry portal:
@@ -481,7 +481,7 @@ not required.
 
 ### What Azure resources do I need?
 
-Just one: an **Azure AI Foundry project** with a deployed GPT model.
+Just one: an **Microsoft Foundry project** with a deployed GPT model.
 That's it. No Playwright resource, no Bing resource, no browser VMs.
 
 ### Does it work on Linux/macOS?
@@ -507,7 +507,7 @@ location picker, and Tier 1/Tier 3 work out of the box.
 
 | Topic | Link |
 |-------|------|
-| Azure AI Foundry overview | [learn.microsoft.com/azure/ai-foundry/](https://learn.microsoft.com/azure/ai-foundry/) |
+| Microsoft Foundry overview | [learn.microsoft.com/azure/ai-foundry/](https://learn.microsoft.com/azure/ai-foundry/) |
 | Deploy OpenAI models | [Deploy models](https://learn.microsoft.com/azure/ai-foundry/how-to/deploy-models-openai) |
 | Agents overview | [Agents overview](https://learn.microsoft.com/azure/ai-services/agents/overview) |
 | Agents quickstart (Python) | [Quickstart](https://learn.microsoft.com/azure/ai-services/agents/quickstart) |
